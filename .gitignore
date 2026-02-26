@@ -1,0 +1,40 @@
+# --- Python / tooling ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Virtual environments ---
+.venv/
+venv/
+ENV/
+
+# --- IDE ---
+.idea/
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Dataset ---
+# Ignore everything under data/ (images, caches, etc.)
+data/*
+
+# Ignore common image types inside data/
+data/**/*.jpg
+data/**/*.jpeg
+data/**/*.png
+data/**/*.bmp
+data/**/*.gif
+data/**/*.webp
+
+# (optional) also ignore numpy/tensor files if you have them
+data/**/*.npy
+data/**/*.npz
+
+# Keep empty folder structure in the repo via placeholder files
+!data/**/
+!data/**/.gitkeep
