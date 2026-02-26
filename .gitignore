@@ -31,7 +31,7 @@ data/**/*.bmp
 data/**/*.gif
 data/**/*.webp
 
-# (optional) also ignore numpy/tensor files if you have them
+# also ignore numpy/tensor files if you have them
 data/**/*.npy
 data/**/*.npz
 
