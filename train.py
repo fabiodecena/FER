@@ -8,13 +8,11 @@ Usage:
 
 import argparse
 from pathlib import Path
-
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from tqdm import tqdm
-
 from dataset import get_dataloader
 from model import build_model
 
@@ -112,7 +110,7 @@ def main(args: argparse.Namespace) -> None:
         lr=args.lr,
         weight_decay=1e-2,          # ★ stronger weight decay
     )
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
+    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
 
     # ── Training loop ──────────────────────────────────────────────
     CHECKPOINT_DIR.mkdir(exist_ok=True)
@@ -121,7 +119,7 @@ def main(args: argparse.Namespace) -> None:
 
     for epoch in range(1, args.epochs + 1):
         # ★ UNFREEZE backbone after epoch 5 for fine-tuning
-        if epoch == 6:
+        if epoch == 4:
             print("  ★ Unfreezing backbone for fine-tuning (lower lr)")
             for param in model.parameters():
                 param.requires_grad = True
@@ -130,9 +128,9 @@ def main(args: argparse.Namespace) -> None:
                 {"params": model.classifier.parameters(), "lr": args.lr},
                 {"params": [p for n, p in model.named_parameters()
                             if "classifier" not in n and p.requires_grad],
-                 "lr": args.lr * 0.1},   # 10x lower for backbone
+                 "lr": args.lr * 0.05},   # lower for backbone
             ], weight_decay=1e-2)
-            scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs - 5)
+            scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
 
         train_loss, train_acc = train_one_epoch(
             model, train_loader, criterion, optimizer, device,
@@ -157,7 +155,7 @@ def main(args: argparse.Namespace) -> None:
             patience_counter += 1
 
         # ★ Early stopping: stop if val acc doesn't improve for 7 epochs
-        if patience_counter >= 7:
+        if patience_counter >= 12:
             print(f"\n⏹ Early stopping at epoch {epoch} (no improvement for 7 epochs)")
             break
 
@@ -169,8 +167,8 @@ def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train FER model")
     parser.add_argument("--data", type=str, default="data", help="Path to data/ folder")
-    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--epochs", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--resume", type=str, default=None, help="Path to checkpoint")
     main(parser.parse_args())
