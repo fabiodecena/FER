@@ -68,9 +68,27 @@ def build_train_transforms(
             transforms.RandomErasing(p=0.15, scale=(0.02, 0.12)),
         ])
 
+    if augmentation == "heavy":
+        return transforms.Compose([
+            transforms.Resize(256),
+            transforms.RandomResizedCrop(img_size, scale=(0.6, 1.0)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.RandomRotation(20),
+            transforms.ColorJitter(
+                brightness=0.4,
+                contrast=0.4,
+                saturation=0.3,
+                hue=0.08,
+            ),
+            transforms.RandomGrayscale(p=0.1),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+            transforms.RandomErasing(p=0.3, scale=(0.02, 0.2)),
+        ])
+
     raise ValueError(
         f"Unsupported augmentation level: {augmentation!r}. "
-        f"Choose from: 'none', 'light', 'medium'."
+        f"Choose from: 'none', 'light', 'medium', 'heavy'."
     )
 
 

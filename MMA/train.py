@@ -306,7 +306,7 @@ if __name__ == "__main__":
     parser.add_argument("--warmup_epochs", type=int, default=5)
     parser.add_argument("--ft_epochs", type=int, default=25)
     parser.add_argument("--patience", type=int, default=8)
-    parser.add_argument("--augmentation", type=str, default="light", choices=["none", "light", "medium"])
+    parser.add_argument("--augmentation", type=str, default="light", choices=["none", "light", "medium", "heavy"])
     parser.add_argument("--label_smoothing", type=float, default=0.05)
     parser.add_argument("--use_class_weights", action="store_true")
     main(parser.parse_args())
