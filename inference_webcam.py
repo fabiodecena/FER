@@ -14,7 +14,7 @@ import torch
 import torch.nn.functional as fnc
 import numpy as np
 from torchvision import transforms
-from KDEF.model import build_model
+from Merged.model import build_model
 
 # ── Config ────────────────────────────────────────────────────────
 CHECKPOINT = "Merged/checkpoints/merged_best_20260305_162825.pt"
