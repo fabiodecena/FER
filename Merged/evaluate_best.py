@@ -14,13 +14,13 @@ from model import build_model
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    ckpt = torch.load("checkpoints/merged_final_model.pt", map_location=device, weights_only=True)
+    ckpt = torch.load("checkpoints/merged_best_20260305_162825.pt", map_location=device, weights_only=True)
     model = build_model(
         num_classes=ckpt["num_classes"],
         backbone=ckpt["arch"],
         pretrained=False,
         dropout=0.0,
-        big_head=True
+        big_head=False
     ).to(device)
     model.load_state_dict(ckpt["state_dict"])
     model.eval()

@@ -1,14 +1,7 @@
-"""
-inference_webcam.py – Riconoscimento emozioni in tempo reale da webcam
-
-Pipeline:
-  1. Cattura frame da webcam
-  2. Rileva volto con OpenCV Haar Cascade (built-in, nessuna dipendenza extra)
-  3. Crop + preprocessing
-  4. Inferenza con modello KDEF
-  5. Overlay risultato sul frame
-"""
-
+import os
+from datetime import datetime
+import tkinter as tk
+from tkinter import messagebox
 import cv2
 import torch
 import torch.nn.functional as fnc
@@ -17,10 +10,13 @@ from torchvision import transforms
 from Merged.model import build_model
 
 # ── Config ────────────────────────────────────────────────────────
-CHECKPOINT = "Merged/checkpoints/merged_best_20260305_162825.pt"
+CHECKPOINT = "Merged/checkpoints/merged_best_20260305_175904.pt"
 CONFIDENCE_THRESHOLD = 0.35
 SMOOTHING_WINDOW = 5
 IMG_SIZE = 224
+
+SCREENSHOT_THRESHOLD = 0.75
+SCREENSHOT_DIR = "screenshots"
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
@@ -105,12 +101,20 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"▶ Device: {device}")
 
+    os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+    screenshot_prompt_shown = False
+
+    popup_root = tk.Tk()
+    popup_root.withdraw()
+    popup_root.attributes("-topmost", True)
+
     # ── Carica modello ────────────────────────────────────────────
     ckpt = torch.load(CHECKPOINT, map_location=device, weights_only=True)
     model = build_model(
         num_classes=ckpt["num_classes"],
         backbone=ckpt["arch"],
         pretrained=False,
+        big_head=False,
         dropout=0.0,
     ).to(device)
     model.load_state_dict(ckpt["state_dict"])
@@ -118,6 +122,7 @@ def main():
 
     classes = ckpt["classes"]
     print(f"▶ Model: {ckpt['arch']}, classes: {classes}")
+    print(f"▶ Screenshot trigger: any emotion >= {SCREENSHOT_THRESHOLD:.0%}")
 
     # ── Face detector ─────────────────────────────────────────────
     face_detector = setup_face_detector()
@@ -128,6 +133,7 @@ def main():
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("❌ Cannot open webcam")
+        popup_root.destroy()
         return
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -163,6 +169,28 @@ def main():
             pred_emotion = classes[pred_idx]
             pred_conf = smoothed[pred_idx]
 
+            # ── Screenshot prompt ────────────────────────────────
+            if pred_conf >= SCREENSHOT_THRESHOLD and not screenshot_prompt_shown:
+                popup_root.update()
+                save_image = messagebox.askyesno(
+                    "Emotion detected",
+                    f"Detected emotion: {pred_emotion} ({pred_conf:.0%}).\nDo you want to save this image?",
+                    parent=popup_root,
+                )
+
+                if save_image:
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    screenshot_path = os.path.join(
+                        SCREENSHOT_DIR,
+                        f"{pred_emotion}_{int(pred_conf * 100)}_{timestamp}.png",
+                    )
+                    cv2.imwrite(screenshot_path, frame)
+                    print(f"📸 Screenshot saved: {screenshot_path}")
+
+                screenshot_prompt_shown = True
+            elif pred_conf < SCREENSHOT_THRESHOLD:
+                screenshot_prompt_shown = False
+
             # ── Draw bounding box ────────────────────────────────
             color = EMOTION_COLORS.get(pred_emotion, (255, 255, 255))
 
@@ -195,6 +223,7 @@ def main():
 
         else:
             smoother.reset()
+            screenshot_prompt_shown = False
             cv2.putText(frame, "No face detected", (20, 40),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
@@ -206,6 +235,7 @@ def main():
 
     cap.release()
     cv2.destroyAllWindows()
+    popup_root.destroy()
     print("▶ Webcam closed.")
 
 
