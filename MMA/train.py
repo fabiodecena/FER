@@ -2,6 +2,11 @@
 train.py – Training MMA FER with freeze/unfreeze fine-tuning
 
 Recommended for low-resolution images (48x48 source images).
+
+Examples:
+    python train.py
+    python train.py --use_class_weights
+    python train.py --backbone mobilenetv3_small_100 --img_size 64 --hidden_dim 128
 """
 
 import argparse
@@ -180,12 +185,14 @@ def main(args: argparse.Namespace):
         split="train",
         batch_size=args.batch_size,
         augmentation=args.augmentation,
+        img_size=args.img_size,
     )
     val_loader, val_ds = get_dataloader(
         args.data,
         split="validation",
         batch_size=args.batch_size,
         augmentation=args.augmentation,
+        img_size=args.img_size,
     )
 
     num_classes = len(train_ds.classes)
@@ -200,13 +207,22 @@ def main(args: argparse.Namespace):
         pretrained=True,
         dropout=args.dropout,
         hidden_dim=args.hidden_dim,
+        input_size=args.img_size,
     ).to(device)
 
     ghost_keys = [k for k in model.state_dict().keys() if k.startswith("logits.")]
     assert not ghost_keys, f"Unexpected 'logits' keys in state_dict: {ghost_keys}"
 
-    class_weights = compute_class_weights(train_ds, device)
-    criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
+    if args.use_class_weights:
+        class_weights = compute_class_weights(train_ds, device)
+        criterion = nn.CrossEntropyLoss(
+            weight=class_weights,
+            label_smoothing=args.label_smoothing,
+        )
+        print("▶ Loss: CrossEntropyLoss with class weights")
+    else:
+        criterion = nn.CrossEntropyLoss(label_smoothing=args.label_smoothing)
+        print("▶ Loss: CrossEntropyLoss without class weights")
 
     CHECKPOINT_DIR.mkdir(exist_ok=True)
     best_ckpt_path = CHECKPOINT_DIR / f"mma_best_{timestamp}.pt"
@@ -239,7 +255,7 @@ def main(args: argparse.Namespace):
     model.unfreeze_backbone()
     optimizer_ft = AdamW([
         {"params": model.backbone.parameters(), "lr": args.lr * 0.1},
-        {"params": model.head.parameters(), "lr": args.lr * 0.5},
+        {"params": model.head.parameters(),     "lr": args.lr * 0.5},
     ], weight_decay=1e-2)
     scheduler_ft = CosineAnnealingLR(optimizer_ft, T_max=args.ft_epochs, eta_min=1e-7)
 
@@ -282,13 +298,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train MMA FER")
     parser.add_argument("--data", type=str, default="data_mma")
     parser.add_argument("--backbone", type=str, default="mobilenetv3_small_100")
+    parser.add_argument("--img_size", type=int, default=96)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--img_size", type=int, default=96)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--hidden_dim", type=int, default=0)
     parser.add_argument("--warmup_epochs", type=int, default=5)
     parser.add_argument("--ft_epochs", type=int, default=25)
     parser.add_argument("--patience", type=int, default=8)
     parser.add_argument("--augmentation", type=str, default="light", choices=["none", "light", "medium"])
+    parser.add_argument("--label_smoothing", type=float, default=0.05)
+    parser.add_argument("--use_class_weights", action="store_true")
     main(parser.parse_args())
