@@ -19,7 +19,6 @@ ENV/
 .idea/
 
 # PyTorch checkpoints
-Merged/checkpoints/
 *.pt
 *.pth
 
