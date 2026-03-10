@@ -18,7 +18,6 @@ from torchvision.datasets import ImageFolder
 
 BATCH_SIZE = 64
 NUM_WORKERS = 8
-
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD = [0.229, 0.224, 0.225]
 
