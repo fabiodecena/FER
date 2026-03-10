@@ -12,19 +12,29 @@ Examples:
 import argparse
 from datetime import datetime
 from pathlib import Path
-
 import numpy as np
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
-
 from dataset import get_dataloader
 from model import build_model
 
 CHECKPOINT_DIR = Path("checkpoints")
+FREEZE_BATCH_SIZE = 16
 
+def mixup_data(x, y, alpha=1.0):
+    """Returns mixed inputs, pairs of targets, and lambda"""
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1.0
+    batch_size = x.size()[0]
+    index = torch.randperm(batch_size).to(x.device)
+    mixed_x = lam * x + (1 - lam) * x[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
 
 def count_params(model: nn.Module) -> tuple[int, int]:
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -98,6 +108,7 @@ def train_one_epoch(
     criterion: nn.Module,
     optimizer,
     device: torch.device,
+    mixup_alpha: float=0.0,
 ):
     model.train()
     total = correct = 0
@@ -107,8 +118,13 @@ def train_one_epoch(
         images, labels = images.to(device), labels.to(device)
 
         optimizer.zero_grad(set_to_none=True)
-        logits = model(images)
-        loss = criterion(logits, labels)
+        if mixup_alpha > 0.0:
+            images, targets_a, targets_b, lam = mixup_data(images, labels, alpha=mixup_alpha)
+            logits = model(images)
+            loss = lam * criterion(logits, targets_a) + (1 - lam) * criterion(logits, targets_b)
+        else:
+            logits = model(images)
+            loss = criterion(logits, labels)
         loss.backward()
         optimizer.step()
 
@@ -134,6 +150,7 @@ def run_phase(
     classes: list[str],
     backbone: str,
     best_ckpt_path: Path,
+    mixup_alpha: float=0.0
 ):
     patience_counter = 0
 
@@ -144,7 +161,7 @@ def run_phase(
     print(f"{'=' * 60}")
 
     for epoch in range(1, epochs + 1):
-        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device, mixup_alpha=mixup_alpha)
         val_loss, val_acc = evaluate(model, val_loader, criterion, device)
 
         if scheduler is not None:
@@ -180,14 +197,31 @@ def main(args: argparse.Namespace):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     print(f"▶ Run timestamp: {timestamp}")
 
-    train_loader, train_ds = get_dataloader(
+    # For freeze/head-only phase
+    train_loader_freeze, train_ds = get_dataloader(
+        args.data,
+        split="train",
+        batch_size=FREEZE_BATCH_SIZE,
+        augmentation=args.augmentation,
+        img_size=args.img_size,
+    )
+    val_loader_freeze, val_ds = get_dataloader(
+        args.data,
+        split="validation",
+        batch_size=FREEZE_BATCH_SIZE,
+        augmentation=args.augmentation,
+        img_size=args.img_size,
+    )
+
+    # For fine-tune phase (custom batch size)
+    train_loader_ft, _ = get_dataloader(
         args.data,
         split="train",
         batch_size=args.batch_size,
         augmentation=args.augmentation,
         img_size=args.img_size,
     )
-    val_loader, val_ds = get_dataloader(
+    val_loader_ft, _ = get_dataloader(
         args.data,
         split="validation",
         batch_size=args.batch_size,
@@ -238,8 +272,8 @@ def main(args: argparse.Namespace):
     run_best_acc = run_phase(
         phase_name="HEAD-ONLY",
         model=model,
-        train_loader=train_loader,
-        val_loader=val_loader,
+        train_loader=train_loader_freeze,
+        val_loader=val_loader_freeze,
         criterion=criterion,
         optimizer=optimizer_head,
         scheduler=scheduler_head,
@@ -250,6 +284,7 @@ def main(args: argparse.Namespace):
         classes=classes,
         backbone=args.backbone,
         best_ckpt_path=best_ckpt_path,
+        mixup_alpha=args.mixup_alpha
     )
 
     model.unfreeze_backbone()
@@ -262,8 +297,8 @@ def main(args: argparse.Namespace):
     run_best_acc = run_phase(
         phase_name="FINE-TUNE",
         model=model,
-        train_loader=train_loader,
-        val_loader=val_loader,
+        train_loader=train_loader_ft,
+        val_loader=val_loader_ft,
         criterion=criterion,
         optimizer=optimizer_ft,
         scheduler=scheduler_ft,
@@ -274,6 +309,7 @@ def main(args: argparse.Namespace):
         classes=classes,
         backbone=args.backbone,
         best_ckpt_path=best_ckpt_path,
+        mixup_alpha=args.mixup_alpha
     )
 
     print(f"\n{'─' * 60}")
@@ -297,16 +333,17 @@ def main(args: argparse.Namespace):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train MMA FER")
     parser.add_argument("--data", type=str, default="data_mma")
-    parser.add_argument("--backbone", type=str, default="efficientnet_b2")
+    parser.add_argument("--backbone", type=str, default="efficientnet_b0")
     parser.add_argument("--img_size", type=int, default=96)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--hidden_dim", type=int, default=0)
     parser.add_argument("--warmup_epochs", type=int, default=5)
-    parser.add_argument("--ft_epochs", type=int, default=30)
+    parser.add_argument("--ft_epochs", type=int, default=50)
     parser.add_argument("--patience", type=int, default=13)
     parser.add_argument("--augmentation", type=str, default="light", choices=["none", "light", "medium", "heavy"])
-    parser.add_argument("--label_smoothing", type=float, default=0.05)
+    parser.add_argument("--label_smoothing", type=float, default=0.00)
     parser.add_argument("--use_class_weights", action="store_true")
+    parser.add_argument('--mixup_alpha', type=float, default=0.0, help='Mixup alpha parameter (default: 0.0, disables Mixup)')
     main(parser.parse_args())

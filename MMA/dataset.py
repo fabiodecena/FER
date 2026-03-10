@@ -8,10 +8,7 @@ Expected structure:
         test/<emotion>/*.jpg
 """
 
-from __future__ import annotations
-
 from pathlib import Path
-
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from torchvision.datasets import ImageFolder
