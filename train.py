@@ -6,7 +6,7 @@ Recommended for low-resolution images (48x48 source images).
 Examples:
     python train.py
     python train.py --use_class_weights
-    python train.py --backbone mobilenetv3_small_100 --img_size 64 --hidden_dim 128
+    python train.py --backbone efficientnet_b0 --img_size 64 --hidden_dim 128
 """
 
 import argparse
@@ -21,7 +21,7 @@ from tqdm import tqdm
 from dataset import get_dataloader
 from model import build_model
 
-CHECKPOINT_DIR = Path("checkpoints")
+CHECKPOINT_DIR = Path("Merged/checkpoints")
 FREEZE_BATCH_SIZE = 16
 
 def mixup_data(x, y, alpha=1.0):
@@ -259,8 +259,8 @@ def main(args: argparse.Namespace):
         print("▶ Loss: CrossEntropyLoss without class weights")
 
     CHECKPOINT_DIR.mkdir(exist_ok=True)
-    best_ckpt_path = CHECKPOINT_DIR / f"mma_best_{timestamp}.pt"
-    final_path = CHECKPOINT_DIR / "mma_final_model.pt"
+    best_ckpt_path = CHECKPOINT_DIR / f"merged_best_{timestamp}.pt"
+    final_path = CHECKPOINT_DIR / "merged_final_model.pt"
 
     global_best_acc = load_final_best_acc(final_path)
     run_best_acc = 0.0
@@ -331,9 +331,9 @@ def main(args: argparse.Namespace):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Train MMA FER")
-    parser.add_argument("--data", type=str, default="data_mma")
-    parser.add_argument("--backbone", type=str, default="efficientnet_b0")
+    parser = argparse.ArgumentParser(description="Train FER")
+    parser.add_argument("--data", type=str, default="Merged/data_merged")
+    parser.add_argument("--backbone", type=str, default="convnext_tiny")
     parser.add_argument("--img_size", type=int, default=96)
     parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--lr", type=float, default=3e-4)
@@ -341,7 +341,7 @@ if __name__ == "__main__":
     parser.add_argument("--hidden_dim", type=int, default=0)
     parser.add_argument("--warmup_epochs", type=int, default=5)
     parser.add_argument("--ft_epochs", type=int, default=50)
-    parser.add_argument("--patience", type=int, default=13)
+    parser.add_argument("--patience", type=int, default=17)
     parser.add_argument("--augmentation", type=str, default="light", choices=["none", "light", "medium", "heavy"])
     parser.add_argument("--label_smoothing", type=float, default=0.00)
     parser.add_argument("--use_class_weights", action="store_true")

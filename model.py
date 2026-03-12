@@ -1,11 +1,3 @@
-"""
-model.py – FER model for MMA low-resolution dataset
-
-Designed for smaller backbones and lower-resolution inputs.
-Recommended defaults:
-- backbone: mobilenetv3_small_100
-- input size: 96
-"""
 
 import torch
 import torch.nn as nn
@@ -23,7 +15,7 @@ class FERModel(nn.Module):
     def __init__(
         self,
         num_classes: int = 7,
-        backbone: str = "mobilenetv3_small_100",
+        backbone: str = "convnext_tiny",
         pretrained: bool = True,
         dropout: float = 0.2,
         hidden_dim: int = 0,
@@ -94,7 +86,7 @@ class FERModel(nn.Module):
 
 def build_model(
     num_classes: int = 7,
-    backbone: str = "mobilenetv3_small_100",
+    backbone: str = "convnext_tiny",
     pretrained: bool = True,
     dropout: float = 0.2,
     hidden_dim: int = 0,
