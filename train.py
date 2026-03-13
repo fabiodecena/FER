@@ -299,8 +299,8 @@ def main(args: argparse.Namespace):
     # Always proceed to fine-tuning
     model.unfreeze_backbone()
     optimizer_ft = AdamW([
-        {"params": model.backbone.parameters(), "lr": args.lr * 0.1},
-        {"params": model.head.parameters(), "lr": args.lr * 0.5},
+        {"params": model.backbone.parameters(), "lr": args.lr * 0.01},
+        {"params": model.head.parameters(), "lr": args.lr},
     ], weight_decay=1e-2)
     scheduler_ft = CosineAnnealingLR(optimizer_ft, T_max=args.ft_epochs, eta_min=1e-7)
 
