@@ -18,21 +18,21 @@ DATASET_CONFIGS = {
         "data_dir": "KDEF/data_split",
         "checkpoint_dir": "KDEF/checkpoints",
         "checkpoint_glob": "kdef_final_model.pt",
-        "output_path": "KDEF/kdef_confusion_matrix.png",
+        "output_prefix": "KDEF/kdef_validation",
         "title": "KDEF Validation",
     },
     "merged": {
         "data_dir": "Merged/data_merged",
         "checkpoint_dir": "Merged/checkpoints",
         "checkpoint_glob": "*.pt",
-        "output_prefix": "merged",
+        "output_prefix": "Merged/merged_validation",
         "title": "Merged Validation",
     },
     "mma": {
         "data_dir": "MMA/data_mma",
         "checkpoint_dir": "MMA/checkpoints",
         "checkpoint_glob": "*.pt",
-        "output_prefix": "mma",
+        "output_prefix": "MMA/mma_validation",
         "title": "MMA Validation",
     },
 }
@@ -57,7 +57,7 @@ def main(args: argparse.Namespace):
 
     data_dir = Path(cfg["data_dir"])
     checkpoint_path = (
-        Path(cfg["checkpoint_dir"]+"/"+args.checkpoint)
+        Path(cfg["checkpoint_dir"] + "/" + args.checkpoint)
         if args.checkpoint is not None
         else find_latest_checkpoint(Path(cfg["checkpoint_dir"]), cfg["checkpoint_glob"])
     )
@@ -109,12 +109,34 @@ def main(args: argparse.Namespace):
     all_preds = np.array(all_preds)
     all_labels = np.array(all_labels)
 
+    report_text = classification_report(all_labels, all_preds, target_names=classes, digits=4)
+
     print(f"\n{'=' * 60}")
     print(f"Classification Report ({args.dataset.upper()} Validation)")
     print(f"{'=' * 60}")
-    print(classification_report(all_labels, all_preds, target_names=classes, digits=4))
+    print(report_text)
+
+    output_prefix = Path(cfg["output_prefix"])
+    report_path = output_prefix.with_name(output_prefix.name + "_metrics.txt")
+    cm_image_path = output_prefix.with_name(output_prefix.name + "_confusion_matrix.png")
+    cm_csv_path = output_prefix.with_name(output_prefix.name + "_confusion_matrix.csv")
+
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(f"Dataset: {args.dataset}\n")
+        f.write(f"Checkpoint: {checkpoint_path}\n")
+        f.write(f"Model: {ckpt['arch']}\n")
+        f.write(f"Classes: {classes}\n")
+        f.write(f"Hidden dim: {hidden_dim}\n\n")
+        f.write(report_text)
+
+    print(f"✅ Saved metrics report to {report_path}")
 
     cm = confusion_matrix(all_labels, all_preds)
+    np.savetxt(cm_csv_path, cm, fmt="%d", delimiter=",", header=",".join(classes), comments="")
+    print(f"✅ Saved confusion matrix values to {cm_csv_path}")
+
     disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=classes)
 
     fig, ax = plt.subplots(figsize=(10, 8))
@@ -123,9 +145,8 @@ def main(args: argparse.Namespace):
     plt.xticks(rotation=45, ha="right")
     plt.tight_layout()
 
-    output_path = Path(f"{cfg['output_path']}")
-    plt.savefig(output_path, dpi=150)
-    print(f"\n✅ Saved {output_path}")
+    plt.savefig(cm_image_path, dpi=150)
+    print(f"✅ Saved confusion matrix image to {cm_image_path}")
 
     if args.show:
         plt.show()

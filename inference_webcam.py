@@ -10,12 +10,12 @@ from torchvision import transforms
 from model import build_model
 
 # ── Config ────────────────────────────────────────────────────────
-CHECKPOINT = "Merged/checkpoints/merged_final_model.pt"
+CHECKPOINT = "Merged/checkpoints/merged_best_20260305_162825.pt"
 CONFIDENCE_THRESHOLD = 0.35
 SMOOTHING_WINDOW = 5
 IMG_SIZE = 224
 
-SCREENSHOT_THRESHOLD = 0.75
+SCREENSHOT_THRESHOLD = 0.65
 SCREENSHOT_DIR = "screenshots"
 
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
@@ -114,7 +114,7 @@ def main():
         num_classes=ckpt["num_classes"],
         backbone=ckpt["arch"],
         pretrained=False,
-        hidden_dim=128,
+        hidden_dim=0,
         dropout=0.0,
     ).to(device)
     model.load_state_dict(ckpt["state_dict"])

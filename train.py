@@ -244,6 +244,11 @@ def main(args: argparse.Namespace):
         input_size=args.img_size,
     ).to(device)
 
+    if args.checkpoint:
+        checkpoint = torch.load(args.checkpoint, map_location=device)
+        model.load_state_dict(checkpoint['state_dict'])
+        print(f"▶ Loaded checkpoint from {args.checkpoint}")
+
     ghost_keys = [k for k in model.state_dict().keys() if k.startswith("logits.")]
     assert not ghost_keys, f"Unexpected 'logits' keys in state_dict: {ghost_keys}"
 
@@ -265,32 +270,37 @@ def main(args: argparse.Namespace):
     global_best_acc = load_final_best_acc(final_path)
     run_best_acc = 0.0
 
-    model.freeze_backbone()
-    optimizer_head = AdamW(model.head.parameters(), lr=args.lr, weight_decay=1e-2)
-    scheduler_head = CosineAnnealingLR(optimizer_head, T_max=args.warmup_epochs, eta_min=1e-6)
+    if not args.checkpoint:
+        model.freeze_backbone()
+        optimizer_head = AdamW(model.head.parameters(), lr=args.lr, weight_decay=1e-2)
+        scheduler_head = CosineAnnealingLR(optimizer_head, T_max=args.warmup_epochs, eta_min=1e-6)
 
-    run_best_acc = run_phase(
-        phase_name="HEAD-ONLY",
-        model=model,
-        train_loader=train_loader_freeze,
-        val_loader=val_loader_freeze,
-        criterion=criterion,
-        optimizer=optimizer_head,
-        scheduler=scheduler_head,
-        device=device,
-        epochs=args.warmup_epochs,
-        patience=args.patience,
-        best_val_acc=run_best_acc,
-        classes=classes,
-        backbone=args.backbone,
-        best_ckpt_path=best_ckpt_path,
-        mixup_alpha=args.mixup_alpha
-    )
+        run_best_acc = run_phase(
+            phase_name="HEAD-ONLY",
+            model=model,
+            train_loader=train_loader_freeze,
+            val_loader=val_loader_freeze,
+            criterion=criterion,
+            optimizer=optimizer_head,
+            scheduler=scheduler_head,
+            device=device,
+            epochs=args.warmup_epochs,
+            patience=args.patience,
+            best_val_acc=run_best_acc,
+            classes=classes,
+            backbone=args.backbone,
+            best_ckpt_path=best_ckpt_path,
+            mixup_alpha=args.mixup_alpha
+        )
+    else:
+        print("▶ Skipping HEAD-ONLY phase (checkpoint loaded)")
+        run_best_acc = 0.0  # Or optionally load from checkpoint meta if desired
 
+    # Always proceed to fine-tuning
     model.unfreeze_backbone()
     optimizer_ft = AdamW([
         {"params": model.backbone.parameters(), "lr": args.lr * 0.1},
-        {"params": model.head.parameters(),     "lr": args.lr * 0.5},
+        {"params": model.head.parameters(), "lr": args.lr * 0.5},
     ], weight_decay=1e-2)
     scheduler_ft = CosineAnnealingLR(optimizer_ft, T_max=args.ft_epochs, eta_min=1e-7)
 
@@ -346,4 +356,5 @@ if __name__ == "__main__":
     parser.add_argument("--label_smoothing", type=float, default=0.00)
     parser.add_argument("--use_class_weights", action="store_true")
     parser.add_argument('--mixup_alpha', type=float, default=0.0, help='Mixup alpha parameter (default: 0.0, disables Mixup)')
+    parser.add_argument('--checkpoint', type=str, default=None, help='Path to checkpoint for fine-tuning')
     main(parser.parse_args())
