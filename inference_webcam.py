@@ -10,7 +10,7 @@ from torchvision import transforms
 from model import build_model
 
 # ── Config ────────────────────────────────────────────────────────
-CHECKPOINT = "Merged/checkpoints/merged_best_20260313_142748.pt"
+CHECKPOINT = "Merged/checkpoints/merged_best_20260305_162825.pt"
 CONFIDENCE_THRESHOLD = 0.35
 SMOOTHING_WINDOW = 5
 IMG_SIZE = 224
