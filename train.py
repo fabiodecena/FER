@@ -21,7 +21,7 @@ from tqdm import tqdm
 from dataset import get_dataloader
 from model import build_model
 
-CHECKPOINT_DIR = Path("Merged/checkpoints")
+CHECKPOINT_DIR = Path("FANE/checkpoints")
 FREEZE_BATCH_SIZE = 16
 
 def mixup_data(x, y, alpha=1.0):
@@ -103,12 +103,12 @@ def evaluate(model: nn.Module, loader, criterion: nn.Module, device: torch.devic
 
 
 def train_one_epoch(
-    model: nn.Module,
-    loader,
-    criterion: nn.Module,
-    optimizer,
-    device: torch.device,
-    mixup_alpha: float=0.0,
+        model: nn.Module,
+        loader,
+        criterion: nn.Module,
+        optimizer,
+        device: torch.device,
+        mixup_alpha: float = 0.0,
 ):
     model.train()
     total = correct = 0
@@ -116,24 +116,35 @@ def train_one_epoch(
 
     for images, labels in tqdm(loader, desc="Train", leave=False):
         images, labels = images.to(device), labels.to(device)
-
         optimizer.zero_grad(set_to_none=True)
+
+        # --- 1. Forward Pass & Loss ---
         if mixup_alpha > 0.0:
+            # Define mixup variables here
             images, targets_a, targets_b, lam = mixup_data(images, labels, alpha=mixup_alpha)
             logits = model(images)
             loss = lam * criterion(logits, targets_a) + (1 - lam) * criterion(logits, targets_b)
+
+            # --- 2. Metrics (Mixup version) ---
+            preds = logits.argmax(1)
+            # lam, targets_a, and targets_b are guaranteed to exist here
+            correct += (lam * (preds == targets_a).sum().float() +
+                        (1 - lam) * (preds == targets_b).sum().float()).item()
         else:
             logits = model(images)
             loss = criterion(logits, labels)
+
+            # --- 2. Metrics (Standard version) ---
+            correct += (logits.argmax(1) == labels).sum().item()
+
+        # --- 3. Backward Pass ---
         loss.backward()
         optimizer.step()
 
         running_loss += loss.item() * images.size(0)
-        correct += (logits.argmax(1) == labels).sum().item()
         total += labels.size(0)
 
     return running_loss / total, correct / total
-
 
 def run_phase(
     phase_name: str,
@@ -209,7 +220,7 @@ def main(args: argparse.Namespace):
         args.data,
         split="validation",
         batch_size=FREEZE_BATCH_SIZE,
-        augmentation=args.augmentation,
+        augmentation="none",
         img_size=args.img_size,
     )
 
@@ -225,7 +236,7 @@ def main(args: argparse.Namespace):
         args.data,
         split="validation",
         batch_size=args.batch_size,
-        augmentation=args.augmentation,
+        augmentation="none",
         img_size=args.img_size,
     )
 

@@ -18,3 +18,4 @@ scikit-learn>=1.2.0
 # ── Visualizzazione ──────────────────────────────────────────────
 matplotlib>=3.6.0
 numpy
+pandas

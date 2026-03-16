@@ -30,5 +30,5 @@ def print_checkpoint_info(ckpt_path):
             print(f"  {k}: {ckpt[k]}")
 
 if __name__ == "__main__":
-    ckpt_file = "Merged/checkpoints/merged_best_20260305_162825.pt"
+    ckpt_file = "Merged/checkpoints/merged_final_model.pt"
     print_checkpoint_info(ckpt_file)

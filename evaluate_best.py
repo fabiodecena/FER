@@ -35,6 +35,13 @@ DATASET_CONFIGS = {
         "output_prefix": "MMA/mma_validation",
         "title": "MMA Validation",
     },
+    "fane": {
+        "data_dir": "FANE/data_fane",
+        "checkpoint_dir": "FANE/checkpoints",
+        "checkpoint_glob": "*.pt",
+        "output_prefix": "FANE/fane_validation",
+        "title": "FANE Validation",
+    }
 }
 
 def find_latest_checkpoint(checkpoint_dir: Path, pattern: str) -> Path:
@@ -156,7 +163,7 @@ def main(args: argparse.Namespace):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate best FER checkpoint on validation set")
-    parser.add_argument("--dataset", type=str, required=True, choices=["kdef", "merged", "mma"])
+    parser.add_argument("--dataset", type=str, required=True, choices=["kdef", "merged", "mma", "fane"])
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--img_size", type=int, default=96)
