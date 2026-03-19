@@ -37,13 +37,15 @@ MMA/data_mma/
 .DS_Store
 Thumbs.db
 
-# Ignore the build files
+
+# Ignore the build metadata
 build/
 *.spec
-_internal/
 
-# Do NOT ignore the dist folder entirely,
-# but ignore the big executable library files
-dist/**/*
-!dist/**/screenshots/
-!dist/**/*.csv
+# Ignore the heavy library guts inside dist
+dist/_internal/
+
+# Keep the executable and the research data
+!dist/inference_webcam/inference_webcam.exe
+!dist/inference_webcam/screenshots/
+!dist/inference_webcam/research_analytics_log.csv
