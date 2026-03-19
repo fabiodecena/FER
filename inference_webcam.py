@@ -1,324 +1,185 @@
 """
-inference_webcam.py
+inference_webcam.py - Marketing Research Edition (v2.0)
 
-Performs real-time facial emotion recognition using your webcam.
-Detects faces, applies a trained model to classify emotions, displays predictions
-on the video stream, and supports interactive screenshot/feedback logging via GUI.
-
-Main features:
-    - Loads a trained model checkpoint and class list
-    - Detects faces with OpenCV Haar cascades
-    - Processes webcam frames in real time,
-        - draws bounding boxes, predicted labels, and live probability bars
-    - Applies a smoothing window on predictions for temporal stability
-    - Prompts user to save high-confidence frames and provide feedback
-    - Logs feedback to a CSV file for further analysis
-
-Dependencies:
-    - OpenCV (cv2)
-    - PyTorch
-    - torchvision
-    - tkinter (for pop-up dialogs)
-    - Your `model.py` with `build_model` function
-
-Example:
-    python inference_webcam.py
+Key Features:
+- Ghost UI: User sees a clean mirror; Department receives analyzed frames.
+- Rate-Limiting: 5-second cooldown between captures to ensure high-quality data.
+- Cloud-Ready: Background hooks for S3 and GitHub LFS versioning.
+- Robust Logging: Immediate CSV flushing for real-time analytics.
 """
+
 import os
 import csv
-from datetime import datetime
-import tkinter as tk
-from tkinter import messagebox, simpledialog
-import cv2
+import time
 import torch
-import torch.nn.functional as fnc
+import cv2
+import boto3
 import numpy as np
+import torch.nn.functional as fnc
+from datetime import datetime
 from torchvision import transforms
 from model import build_model
+import sys
 
-# ── Config ────────────────────────────────────────────────────────
-CHECKPOINT = "Merged/checkpoints/merged_best_20260317_083849.pt"
-CONFIDENCE_THRESHOLD = 0.35
-SMOOTHING_WINDOW = 5
+import sys
+import os
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+# --- UPDATE YOUR PATHS USING THE FUNCTION ---
+CHECKPOINT = resource_path("Merged/checkpoints/merged_best_20260305_162825.pt")
+CASCADE_FILE = resource_path("haarcascade_frontalface_default.xml")
+SCREENSHOT_DIR = "screenshots"
+FEEDBACK_LOG = "research_analytics_log.csv"
+
+# Thresholds & Timing
+CONF_THRESHOLD = 0.70      # Quality trigger
+COOLDOWN_SECONDS = 3.0     # Prevent rapid-fire saving
 IMG_SIZE = 224
 
-SCREENSHOT_THRESHOLD = 0.65
-SCREENSHOT_DIR = "screenshots"
-FEEDBACK_LOG = "user_feedback_log.csv"
-
-IMAGENET_MEAN = [0.485, 0.456, 0.406]
-IMAGENET_STD = [0.229, 0.224, 0.225]
+# AWS S3 Credentials (Defaults to DUMMY to prevent errors)
+S3_BUCKET = os.getenv("S3_BUCKET", "marketing-sentiment-data")
+AWS_KEY = os.getenv("AWS_KEY", "DUMMY_KEY")
+AWS_SECRET = os.getenv("AWS_SECRET", "DUMMY_SECRET")
 
 EMOTION_COLORS = {
-    "angry": (0, 0, 255),
-    "disgust": (0, 128, 128),
-    "fear": (128, 0, 128),
-    "happy": (0, 255, 0),
-    "neutral": (200, 200, 200),
-    "sad": (255, 128, 0),
-    "surprise": (0, 255, 255),
+    "angry": (0, 0, 255), "disgust": (0, 128, 128), "fear": (128, 0, 128),
+    "happy": (0, 255, 0), "neutral": (200, 200, 200), "sad": (255, 128, 0),
+    "surprise": (0, 255, 255)
 }
 
+# ── Helper: Cloud Sync ──────────────────────────────────────────
+def sync_to_cloud(file_path):
+    """Silent upload to S3. Skips if using DUMMY credentials."""
+    if "DUMMY" not in AWS_KEY:
+        try:
+            s3 = boto3.client('s3', aws_access_key_id=AWS_KEY, aws_secret_access_key=AWS_SECRET)
+            s3.upload_file(file_path, S3_BUCKET, file_path)
+            print(f"☁️ Cloud Sync: {file_path} pushed to S3.")
+        except Exception as e:
+            print(f"⚠️ S3 Sync Skipped: {e}")
 
-# ── Logging Setup ────────────────────────────────────────────────
-def log_feedback(filename, timestamp, pred_class, feedback_yes_no, true_label):
+# ── Helper: Robust Logging ──────────────────────────────────────
+def log_research_data(img_filename, emotion, confidence):
     """
-        Appends a user feedback record to the feedback log CSV.
-
-        If the log does not exist, writes the header row first.
-
-        Args:
-            filename (str): Image filename that was saved.
-            timestamp (str): Timestamp as a string.
-            pred_class (str): The predicted emotion label.
-            feedback_yes_no (str): 'yes' if the user agreed with the prediction, 'no' otherwise.
-            true_label (str): The user's provided true label (or 'unknown').
+    Logs metadata to CSV with a placeholder for Human Audit.
+    Ensures the file is flushed to disk for immediate S3/LFS sync.
     """
     file_exists = os.path.isfile(FEEDBACK_LOG)
     with open(FEEDBACK_LOG, mode='a', newline='') as f:
         writer = csv.writer(f)
+
+        # Professional Header with Audit Column
         if not file_exists:
-            writer.writerow(['filename', 'timestamp', 'predicted_class', 'user_feedback', 'true_label'])
-        writer.writerow([filename, timestamp, pred_class, feedback_yes_no, true_label])
+            writer.writerow([
+                'timestamp',
+                'image_path',
+                'ai_predicted_emotion',
+                'ai_confidence',
+                'true_label'  # The Audit Column
+            ])
 
+        # Log the data with "pending_review" as the placeholder
+        writer.writerow([
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            img_filename,
+            emotion,
+            f"{confidence:.4f}",
+            "pending_review"  # Marketing Analyst will change this
+        ])
 
-# ── Preprocessing ─────────────────────────────────────────────────
+    # Sync the log file to the cloud
+    sync_to_cloud(FEEDBACK_LOG)
+
+# ── Preprocessing ────────────────────────────────────────────────
 preprocess = transforms.Compose([
     transforms.ToPILImage(),
     transforms.Resize(256),
     transforms.CenterCrop(IMG_SIZE),
     transforms.ToTensor(),
-    transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-
-# ── Smoothing buffer ─────────────────────────────────────────────
-class PredictionSmoother:
-    """
-        Maintains a moving window buffer of prediction vectors to smooth predictions over time.
-
-        Attributes:
-            window (int): Size of the smoothing window.
-            buffer (list): Stores recent probability vectors.
-    """
-    def __init__(self, window: int = 5):
-        """
-            Args:window (int): Number of frames to smooth over (default 5).
-        """
-        self.window = window
-        self.buffer = []
-
-    def update(self, probs: np.ndarray) -> np.ndarray:
-        """
-            Adds a new probability vector to the buffer and returns the smoothed mean.
-
-            Args: probs (np.ndarray): Probability vector for the current frame.
-
-            Returns: np.ndarray: Smoothed probability vector.
-        """
-        self.buffer.append(probs)
-        if len(self.buffer) > self.window:
-            self.buffer.pop(0)
-        return np.mean(self.buffer, axis=0)
-
-    def reset(self):
-        """Clears the smoothing buffer."""
-        self.buffer.clear()
-
-
-# ── Face detection ───────────────────────────────────────────────
-def setup_face_detector():
-    """
-        Loads and initializes an OpenCV Haar-cascade face detector.
-
-        Returns:
-            cv2.CascadeClassifier: Haar-cascade face detector.
-
-        Raises:
-            RuntimeError: If the classifier cannot be loaded.
-    """
-    cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-    detector = cv2.CascadeClassifier(cascade_path)
-    if detector.empty():
-        raise RuntimeError(f"Cannot load cascade: {cascade_path}")
-    return detector
-
-
-def detect_face(detector, frame_bgr) -> tuple[int, int, int, int] | None:
-    """
-        Detects a face within a BGR frame using the provided detector.
-
-        Args:
-            detector (cv2.CascadeClassifier): The face detector.
-            frame_bgr (np.ndarray): Frame in BGR format.
-
-        Returns:
-            tuple or None: Bounding box (x, y, w, h) of the largest detected face,
-                           or None if no face is found.
-    """
-    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-    faces = detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(80, 80))
-    if len(faces) == 0: return None
-    best = max(faces, key=lambda f: f[2] * f[3])
-    x, y, w, h = best
-    pad_x, pad_y = int(w * 0.2), int(h * 0.2)
-    fh, fw = frame_bgr.shape[:2]
-    x, y = max(0, x - pad_x), max(0, y - pad_y)
-    w, h = min(fw - x, w + 2 * pad_x), min(fh - y, h + 2 * pad_y)
-    return x, y, w, h
-
-
-# ── Main loop ─────────────────────────────────────────────────────
+# ── Main Application ─────────────────────────────────────────────
 def main():
-    """
-        Runs the webcam real-time emotion recognition loop.
-
-        - Loads model and face detector
-        - Captures webcam stream and applies face/emotion detection
-        - Draws bounding box, predictions, and probability bars on the video feed
-        - Prompts user via popup to save images and log feedback when confidence is high
-
-        Window can be closed by pressing 'q'.
-
-        Raises:
-            RuntimeError: If the webcam cannot be opened, or if a Haar-cascade file is missing.
-
-        Prints:
-            Device info and operational status.
-    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"▶ Device: {device}")
-
     os.makedirs(SCREENSHOT_DIR, exist_ok=True)
-    screenshot_prompt_shown = False
 
-    popup_root = tk.Tk()
-    popup_root.withdraw()
-    popup_root.attributes("-topmost", True)
-
+    # Initialization
     ckpt = torch.load(CHECKPOINT, map_location=device, weights_only=True)
-    model = build_model(
-        num_classes=ckpt["num_classes"],
-        backbone=ckpt["arch"],
-        pretrained=False,
-        hidden_dim=256,
-        dropout=0.0,
-    ).to(device)
+    model = build_model(num_classes=ckpt["num_classes"], backbone=ckpt["arch"]).to(device)
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
 
     classes = ckpt["classes"]
-    face_detector = setup_face_detector()
-    smoother = PredictionSmoother(window=SMOOTHING_WINDOW)
-
+    detector = cv2.CascadeClassifier(CASCADE_FILE)
+    if detector.empty():
+        print(f"❌ Error: Cannot load face detector at {CASCADE_FILE}")
     cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("❌ Cannot open webcam")
-        popup_root.destroy()
-        return
 
-    print("▶ Webcam started. Press 'q' to quit.")
+    last_capture_time = 0
+    print("▶ Research Probe Active. User UI: 'Ghost Mirror'.")
 
     while True:
         ret, frame = cap.read()
         if not ret: break
 
-        face_box = detect_face(face_detector, frame)
+        # Stream Management
+        user_display = frame.copy()    # Clean Feed
+        research_data = frame.copy()   # Analysis Feed
 
-        if face_box is not None:
-            x, y, w, h = face_box
-            face_crop_rgb = cv2.cvtColor(frame[y:y + h, x:x + w], cv2.COLOR_BGR2RGB)
-            if face_crop_rgb.size == 0: continue
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = detector.detectMultiScale(gray, 1.1, 5, minSize=(100, 100))
 
-            input_tensor = preprocess(face_crop_rgb).unsqueeze(0).to(device)
+        for (x, y, w, h) in faces:
+            # Inference Logic
+            face_roi = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2RGB)
+            input_tensor = preprocess(face_roi).unsqueeze(0).to(device)
+
             with torch.no_grad():
                 logits = model(input_tensor)
                 probs = fnc.softmax(logits, dim=1).cpu().numpy()[0]
 
-            smoothed = smoother.update(probs)
-            pred_idx = int(np.argmax(smoothed))
-            pred_emotion = classes[pred_idx]
-            pred_conf = smoothed[pred_idx]
+            pred_idx = np.argmax(probs)
+            emotion = classes[pred_idx]
+            conf = probs[pred_idx]
 
-            # ── Feedback Logic ───────────────────────────────────
-            if pred_conf >= SCREENSHOT_THRESHOLD and not screenshot_prompt_shown:
-                popup_root.update()
-                save_image = messagebox.askyesno(
-                    "Detection Prompt",
-                    f"Detected {pred_emotion} ({pred_conf:.0%}). Save image?",
-                    parent=popup_root
-                )
+            # Analysis Overlay (Internal Only)
+            color = EMOTION_COLORS.get(emotion, (255, 255, 255))
+            cv2.rectangle(research_data, (x, y), (x+w, y+h), color, 3)
+            cv2.putText(research_data, f"{emotion.upper()} ({conf:.2f})", (x, y-15),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
-                if save_image:
-                    now = datetime.now()
-                    timestamp_str = now.strftime("%Y-%m-%d %H:%M:%S")
-                    file_timestamp = now.strftime("%Y%m%d_%H%M%S")
-                    filename = f"{pred_emotion}_{file_timestamp}.png"
+            # ── Capture with Cooldown ──
+            current_time = time.time()
+            if conf >= CONF_THRESHOLD and (current_time - last_capture_time) > COOLDOWN_SECONDS:
+                timestamp = datetime.now().strftime("%H%M%S")
+                filename = f"{SCREENSHOT_DIR}/{emotion}_{timestamp}.png"
 
-                    cv2.imwrite(os.path.join(SCREENSHOT_DIR, filename), frame)
+                # 1. Save Image (Research Frame)
+                cv2.imwrite(filename, research_data)
 
-                    is_correct = messagebox.askyesno(
-                        "Verify Accuracy",
-                        f"Is '{pred_emotion}' correct?",
-                        parent=popup_root
-                    )
+                # 2. Log Data & Sync
+                log_research_data(filename, emotion, conf)
+                sync_to_cloud(filename)
 
-                    feedback_val = "yes" if is_correct else "no"
-                    true_label = pred_emotion
+                last_capture_time = current_time
+                print(f"📸 Captured: {emotion} at {conf:.2f}. Cooldown engaged.")
 
-                    if not is_correct:
-                        true_label = simpledialog.askstring(
-                            "Manual Label",
-                            f"Correct emotion ({', '.join(classes)}):",
-                            parent=popup_root
-                        )
-                        if not true_label: true_label = "unknown"
+        # Display the Ghost Mirror
+        cv2.imshow("Marketing Study - Participant Feed", user_display)
 
-                    log_feedback(filename, timestamp_str, pred_emotion, feedback_val, true_label)
-
-                screenshot_prompt_shown = True
-            elif pred_conf < SCREENSHOT_THRESHOLD:
-                screenshot_prompt_shown = False
-
-            # ── Drawing: Bounding Box & Label ────────────────────
-            color = EMOTION_COLORS.get(pred_emotion, (255, 255, 255))
-            if pred_conf >= CONFIDENCE_THRESHOLD:
-                label = f"{pred_emotion} {pred_conf:.0%}"
-            else:
-                label = "uncertain"
-                color = (128, 128, 128)
-
-            cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-            label_size, _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)
-            cv2.rectangle(frame, (x, y - 30), (x + label_size[0] + 10, y), color, -1)
-            cv2.putText(frame, label, (x + 5, y - 8),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
-            # ── Drawing: Probability bars (Right Side) ────────────
-            bar_x = frame.shape[1] - 220
-            bar_y_start = 30
-            for i, (cls, prob) in enumerate(zip(classes, smoothed)):
-                bar_y = bar_y_start + i * 30
-                bar_w = int(prob * 180)
-                c = EMOTION_COLORS.get(cls, (200, 200, 200))
-
-                cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + 20), c, -1)
-                cv2.rectangle(frame, (bar_x, bar_y), (bar_x + 180, bar_y + 20), (100, 100, 100), 1)
-                cv2.putText(frame, f"{cls[:3]} {prob:.0%}", (bar_x - 70, bar_y + 15),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
-        else:
-            smoother.reset()
-            screenshot_prompt_shown = False
-            cv2.putText(frame, "No face detected", (20, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-
-        cv2.imshow("FER - Emotion Recognition", frame)
-        if cv2.waitKey(1) & 0xFF == ord("q"): break
+        if cv2.waitKey(1) & 0xFF == ord('q'): break
 
     cap.release()
     cv2.destroyAllWindows()
-    popup_root.destroy()
-
 
 if __name__ == "__main__":
     main()

@@ -1,112 +1,82 @@
-"""
-merge_datasets.py – Combina KDEF e MMA con bilanciamento
-
-Strategia:
-  - Cap classi grandi MMA a MAX_PER_CLASS
-  - Oversample KDEF x KDEF_REPEAT
-  - Shuffle e copia in data_merged/
-"""
-
 import shutil
 import random
 from pathlib import Path
-
+from PIL import Image
+import torchvision.transforms as T
 
 # ── Config ────────────────────────────────────────────────────────
-KDEF_ROOT = Path("KDEF/data_split")          # KDEF splittato
-MMA_ROOT  = Path("MMA/data_mma")       # MMA scaricato
+KDEF_ROOT = Path("KDEF/data_split")
+MMA_ROOT = Path("MMA/data_mma")
 DST = Path("Merged/data_merged")
 
-MAX_PER_CLASS = 6000        # cap per classe per split train (MMA)
-MAX_PER_CLASS_VAL = 1000    # cap per classe per val/test
-KDEF_REPEAT = 3             # quante volte ripetere KDEF
-SEED = 42
+# TARGET BALANCE: KDEF should be roughly 35% of the total per class
+TARGET_KDEF_RATIO = 0.35
+MAX_MMA_TRAIN = 5000
+random.seed(42)
 
-SPLITS_MAP = {
-    "train": "train",
-    "validation": "validation",
-    "test": "test",
-}
-
-CLASSES = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
-IMG_EXT = {".jpg", ".jpeg", ".png", ".bmp"}
-
-
-def collect_images(root: Path, split: str, cls: str) -> list[Path]:
-    """Raccoglie tutte le immagini per split/classe."""
-    d = root / split / cls
-    if not d.exists():
-        return []
-    return [f for f in d.iterdir() if f.suffix.lower() in IMG_EXT]
+# Mutation Pipeline (Keep this to make KDEF "webcam-ready")
+kdef_mutator = T.Compose([
+    T.RandomResizedCrop(size=(96, 96), scale=(0.8, 1.0)),
+    T.RandomRotation(degrees=15),
+    T.ColorJitter(brightness=0.3, contrast=0.3),
+    T.RandomHorizontalFlip(p=0.5),
+    T.GaussianBlur(kernel_size=(3, 3), sigma=(0.1, 1.0)),
+])
 
 
-def main():
-    random.seed(SEED)
+def merge_balanced():
+    if DST.exists(): shutil.rmtree(DST)
+    classes = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surprise"]
 
-    if DST.exists():
-        shutil.rmtree(DST)
+    for split in ["train", "validation", "test"]:
+        print(f"\n▶ {split.upper()} Distribution:")
+        print(f"{'Class':<12} | {'KDEF (Aug)':<10} | {'MMA':<10} | {'Ratio'}")
+        print("-" * 55)
 
-    for split in SPLITS_MAP:
-        is_train = (split == "train")
-        cap = MAX_PER_CLASS if is_train else MAX_PER_CLASS_VAL
-
-        print(f"\n{'='*60}")
-        print(f"Split: {split} (cap={cap}, KDEF repeat={KDEF_REPEAT if is_train else 1})")
-        print(f"{'='*60}")
-
-        for cls in CLASSES:
-            # ── Raccogli immagini ─────────────────────────────────
-            kdef_imgs = collect_images(KDEF_ROOT, split, cls)
-            mma_imgs  = collect_images(MMA_ROOT, split, cls)
-
-            # ── Oversample KDEF (solo train) ──────────────────────
-            repeat = KDEF_REPEAT if is_train else 1
-            kdef_expanded = kdef_imgs * repeat
-
-            # ── Cap MMA se necessario ─────────────────────────────
-            remaining_slots = max(0, cap - len(kdef_expanded))
-            if len(mma_imgs) > remaining_slots:
-                random.shuffle(mma_imgs)
-                mma_imgs = mma_imgs[:remaining_slots]
-
-            # ── Copia ────────────────────────────────────────────
+        for cls in classes:
             dst_dir = DST / split / cls
             dst_dir.mkdir(parents=True, exist_ok=True)
 
-            copied = 0
+            # 1. Count available images
+            k_src = KDEF_ROOT / split / cls
+            m_src = MMA_ROOT / split / cls
+            k_orig_imgs = list(k_src.glob("*")) if k_src.exists() else []
+            m_orig_imgs = list(m_src.glob("*")) if m_src.exists() else []
 
-            # Copia KDEF (con prefisso per evitare collisioni nomi)
-            for i, img in enumerate(kdef_expanded):
-                rep_idx = i // max(len(kdef_imgs), 1)
-                dst_name = f"kdef_r{rep_idx}_{img.name}"
-                shutil.copy2(img, dst_dir / dst_name)
-                copied += 1
+            # 2. Cap MMA
+            cap = MAX_MMA_TRAIN if split == "train" else 500
+            random.shuffle(m_orig_imgs)
+            selected_mma = m_orig_imgs[:cap]
+            m_count = len(selected_mma)
 
-            # Copia MMA
-            for img in mma_imgs:
-                dst_name = f"mma_{img.name}"
-                shutil.copy2(img, dst_dir / dst_name)
-                copied += 1
+            # 3. Calculate dynamic KDEF variants for TRAIN
+            if split == "train" and len(k_orig_imgs) > 0 and m_count > 0:
+                # Formula: How many KDEF total do we need to hit 35%?
+                target_total = m_count / (1 - TARGET_KDEF_RATIO)
+                target_k_total = target_total - m_count
+                variants_per_img = max(1, int(target_k_total / len(k_orig_imgs)))
+            else:
+                variants_per_img = 1
 
-            kdef_count = len(kdef_expanded)
-            mma_count = len(mma_imgs)
-            print(f"  {cls:12s}: KDEF={kdef_count:5d} + MMA={mma_count:5d} = {copied:5d}")
+            # 4. Save KDEF
+            k_final_count = 0
+            for img_path in k_orig_imgs:
+                with Image.open(img_path).convert("RGB") as img:
+                    if split == "train":
+                        for i in range(variants_per_img):
+                            kdef_mutator(img).save(dst_dir / f"k_v{i}_{img_path.name}")
+                            k_final_count += 1
+                    else:
+                        img.save(dst_dir / f"k_orig_{img_path.name}")
+                        k_final_count += 1
 
-    # ── Riepilogo finale ──────────────────────────────────────────
-    print(f"\n{'='*60}")
-    print("Final counts:")
-    print(f"{'='*60}")
-    for split in SPLITS_MAP:
-        total = 0
-        for cls in CLASSES:
-            d = DST / split / cls
-            if d.exists():
-                n = len([f for f in d.iterdir() if f.suffix.lower() in IMG_EXT])
-                total += n
-        print(f"  {split:12s}: {total:6d} images")
+            # 5. Save MMA
+            for img_path in selected_mma:
+                shutil.copy2(img_path, dst_dir / f"m_{img_path.name}")
 
-    print(f"\n✅ Merged dataset → {DST}")
+            ratio = k_final_count / (k_final_count + m_count) if (k_final_count + m_count) > 0 else 0
+            print(f"{cls:<12} | {k_final_count:<10} | {m_count:<10} | {ratio:.1%}")
 
 
 if __name__ == "__main__":
-    main()
+    merge_balanced()

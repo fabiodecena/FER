@@ -27,10 +27,8 @@ Merged/data_merged/
 KDEF/data_split/
 MMA/data_mma/
 
-# Distribution / packaging
 *.egg-info/
-dist/
-build/
+
 
 # Jupyter Notebook
 .ipynb_checkpoints/
@@ -38,3 +36,14 @@ build/
 # OS
 .DS_Store
 Thumbs.db
+
+# Ignore the build files
+build/
+*.spec
+_internal/
+
+# Do NOT ignore the dist folder entirely,
+# but ignore the big executable library files
+dist/**/*
+!dist/**/screenshots/
+!dist/**/*.csv
