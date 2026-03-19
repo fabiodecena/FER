@@ -1,7 +1,18 @@
 """
-evaluate_best.py – Evaluation on validation sets
-"""
+evaluate_best.py
 
+Evaluates a trained FER model checkpoint on a validation set, computes metrics, and saves reports.
+
+Features:
+    - Supports multiple datasets/configurations (KDEF, MMA, FANE, merged)
+    - Finds latest checkpoint automatically, or uses specified file
+    - Computes predictions, classification report, and confusion matrix
+    - Saves metrics and confusion matrix as .txt, .csv, and .png files
+    - Optionally displays confusion matrix plot
+
+Example usage:
+    python evaluate_best.py --dataset merged --batch_size 64 --img_size 96
+"""
 
 import argparse
 from pathlib import Path
@@ -11,7 +22,6 @@ import torch
 from sklearn.metrics import classification_report, confusion_matrix, ConfusionMatrixDisplay
 from dataset import get_dataloader
 from model import build_model
-
 
 DATASET_CONFIGS = {
     "kdef": {
@@ -45,19 +55,65 @@ DATASET_CONFIGS = {
 }
 
 def find_latest_checkpoint(checkpoint_dir: Path, pattern: str) -> Path:
+    """
+    Finds the most recently modified checkpoint file in a directory based on a glob pattern.
+
+    Args:
+        checkpoint_dir (Path): Directory containing checkpoint files.
+        pattern (str): Glob pattern to match checkpoint files.
+
+    Returns:
+        Path: Path to the most recent checkpoint file.
+
+    Raises:
+        FileNotFoundError: If no matching checkpoint files found.
+    """
     candidates = sorted(checkpoint_dir.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
     if not candidates:
         raise FileNotFoundError(f"No checkpoint found in: {checkpoint_dir}")
     return candidates[0]
 
-
 def infer_hidden_dim_from_state_dict(state_dict: dict) -> int:
+    """
+    Infers the hidden dimension of the model head from checkpoint state dict.
+    Returns 0 if no extra hidden layer is used.
+
+    Args:
+        state_dict (dict): PyTorch state dictionary from checkpoint.
+
+    Returns:
+        int: Hidden layer dimension, or 0 if not present.
+    """
     if "head.4.weight" in state_dict:
         return state_dict["head.1.weight"].shape[0]
     return 0
 
-
 def main(args: argparse.Namespace):
+    """
+    Main evaluation routine. Loads model and validation data, computes predictions,
+    evaluates metrics, and saves reports/confusion matrices.
+
+    Args:
+        args (argparse.Namespace): Command-line arguments specifying dataset, checkpoint, etc.
+
+    Steps:
+        - Loads best checkpoint and configuration for selected dataset.
+        - Builds model, loads weights, sets to eval mode.
+        - Loads validation data loader.
+        - Computes predictions for all validation samples.
+        - Generates classification report and confusion matrix.
+        - Saves metrics report (.txt), confusion matrix (.csv), and confusion matrix image (.png).
+        - Optionally displays confusion matrix plot.
+
+    Prints:
+        - Device info
+        - Key config and checkpoint info
+        - Model/class/status info
+        - Metrics and report paths
+
+    Raises:
+        FileNotFoundError: If checkpoint file not found.
+    """
     cfg = DATASET_CONFIGS[args.dataset]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"▶ Device: {device}")
@@ -160,13 +216,12 @@ def main(args: argparse.Namespace):
     else:
         plt.close(fig)
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate best FER checkpoint on validation set")
     parser.add_argument("--dataset", type=str, required=True, choices=["kdef", "merged", "mma", "fane"])
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--img_size", type=int, default=96)
-    parser.add_argument("--num_workers", type=int, default=0)
+    parser.add_argument("--num_workers", type=int, default=24)
     parser.add_argument("--show", action="store_true")
     main(parser.parse_args())

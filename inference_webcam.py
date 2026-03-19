@@ -1,3 +1,29 @@
+"""
+inference_webcam.py
+
+Performs real-time facial emotion recognition using your webcam.
+Detects faces, applies a trained model to classify emotions, displays predictions
+on the video stream, and supports interactive screenshot/feedback logging via GUI.
+
+Main features:
+    - Loads a trained model checkpoint and class list
+    - Detects faces with OpenCV Haar cascades
+    - Processes webcam frames in real time,
+        - draws bounding boxes, predicted labels, and live probability bars
+    - Applies a smoothing window on predictions for temporal stability
+    - Prompts user to save high-confidence frames and provide feedback
+    - Logs feedback to a CSV file for further analysis
+
+Dependencies:
+    - OpenCV (cv2)
+    - PyTorch
+    - torchvision
+    - tkinter (for pop-up dialogs)
+    - Your `model.py` with `build_model` function
+
+Example:
+    python inference_webcam.py
+"""
 import os
 import csv
 from datetime import datetime
@@ -11,7 +37,7 @@ from torchvision import transforms
 from model import build_model
 
 # ── Config ────────────────────────────────────────────────────────
-CHECKPOINT = "Merged/checkpoints/merged_best_20260305_162825.pt"
+CHECKPOINT = "Merged/checkpoints/merged_best_20260317_083849.pt"
 CONFIDENCE_THRESHOLD = 0.35
 SMOOTHING_WINDOW = 5
 IMG_SIZE = 224
@@ -36,6 +62,18 @@ EMOTION_COLORS = {
 
 # ── Logging Setup ────────────────────────────────────────────────
 def log_feedback(filename, timestamp, pred_class, feedback_yes_no, true_label):
+    """
+        Appends a user feedback record to the feedback log CSV.
+
+        If the log does not exist, writes the header row first.
+
+        Args:
+            filename (str): Image filename that was saved.
+            timestamp (str): Timestamp as a string.
+            pred_class (str): The predicted emotion label.
+            feedback_yes_no (str): 'yes' if the user agreed with the prediction, 'no' otherwise.
+            true_label (str): The user's provided true label (or 'unknown').
+    """
     file_exists = os.path.isfile(FEEDBACK_LOG)
     with open(FEEDBACK_LOG, mode='a', newline='') as f:
         writer = csv.writer(f)
@@ -56,22 +94,49 @@ preprocess = transforms.Compose([
 
 # ── Smoothing buffer ─────────────────────────────────────────────
 class PredictionSmoother:
+    """
+        Maintains a moving window buffer of prediction vectors to smooth predictions over time.
+
+        Attributes:
+            window (int): Size of the smoothing window.
+            buffer (list): Stores recent probability vectors.
+    """
     def __init__(self, window: int = 5):
+        """
+            Args:window (int): Number of frames to smooth over (default 5).
+        """
         self.window = window
         self.buffer = []
 
     def update(self, probs: np.ndarray) -> np.ndarray:
+        """
+            Adds a new probability vector to the buffer and returns the smoothed mean.
+
+            Args: probs (np.ndarray): Probability vector for the current frame.
+
+            Returns: np.ndarray: Smoothed probability vector.
+        """
         self.buffer.append(probs)
         if len(self.buffer) > self.window:
             self.buffer.pop(0)
         return np.mean(self.buffer, axis=0)
 
     def reset(self):
+        """Clears the smoothing buffer."""
         self.buffer.clear()
 
 
 # ── Face detection ───────────────────────────────────────────────
 def setup_face_detector():
+    """
+        Loads and initializes an OpenCV Haar-cascade face detector.
+
+        Returns:
+            cv2.CascadeClassifier: Haar-cascade face detector.
+
+        Raises:
+            RuntimeError: If the classifier cannot be loaded.
+    """
     cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
     detector = cv2.CascadeClassifier(cascade_path)
     if detector.empty():
@@ -80,6 +145,17 @@ def setup_face_detector():
 
 
 def detect_face(detector, frame_bgr) -> tuple[int, int, int, int] | None:
+    """
+        Detects a face within a BGR frame using the provided detector.
+
+        Args:
+            detector (cv2.CascadeClassifier): The face detector.
+            frame_bgr (np.ndarray): Frame in BGR format.
+
+        Returns:
+            tuple or None: Bounding box (x, y, w, h) of the largest detected face,
+                           or None if no face is found.
+    """
     gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
     faces = detector.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(80, 80))
     if len(faces) == 0: return None
@@ -94,6 +170,22 @@ def detect_face(detector, frame_bgr) -> tuple[int, int, int, int] | None:
 
 # ── Main loop ─────────────────────────────────────────────────────
 def main():
+    """
+        Runs the webcam real-time emotion recognition loop.
+
+        - Loads model and face detector
+        - Captures webcam stream and applies face/emotion detection
+        - Draws bounding box, predictions, and probability bars on the video feed
+        - Prompts user via popup to save images and log feedback when confidence is high
+
+        Window can be closed by pressing 'q'.
+
+        Raises:
+            RuntimeError: If the webcam cannot be opened, or if a Haar-cascade file is missing.
+
+        Prints:
+            Device info and operational status.
+    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"▶ Device: {device}")
 
@@ -109,7 +201,7 @@ def main():
         num_classes=ckpt["num_classes"],
         backbone=ckpt["arch"],
         pretrained=False,
-        hidden_dim=0,
+        hidden_dim=256,
         dropout=0.0,
     ).to(device)
     model.load_state_dict(ckpt["state_dict"])

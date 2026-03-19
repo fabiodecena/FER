@@ -1,9 +1,18 @@
 """
-train.py – Training MMA FER with freeze/unfreeze fine-tuning
+train.py
 
-Recommended for low-resolution images (48x48 source images).
+Main training script for MMA FER (Facial Expression Recognition) with a freeze/unfreeze fine-tuning routine.
 
-Examples:
+Features:
+    - Two-phase training: head-only (backbone frozen) then full model fine-tuning
+    - Supports low-resolution images (e.g., 48x48 or higher)
+    - Mixup augmentation
+    - Class-balanced loss (optional)
+    - Cosine annealing LR scheduler
+    - Early stopping on validation accuracy plateau
+    - Checkpointing and best-model tracking
+
+Example usage:
     python train.py
     python train.py --use_class_weights
     python train.py --backbone efficientnet_b0 --img_size 64 --hidden_dim 128
@@ -21,11 +30,24 @@ from tqdm import tqdm
 from dataset import get_dataloader
 from model import build_model
 
-CHECKPOINT_DIR = Path("FANE/checkpoints")
+CHECKPOINT_DIR = Path("Merged/checkpoints")
 FREEZE_BATCH_SIZE = 16
 
 def mixup_data(x, y, alpha=1.0):
-    """Returns mixed inputs, pairs of targets, and lambda"""
+    """Mixes up training data and targets using the Mixup strategy.
+
+    Args:
+        x (torch.Tensor): Batch of input images.
+        y (torch.Tensor): Batch of target labels.
+        alpha (float): Mixup strength; if 0 disables mixup.
+
+    Returns:
+        tuple:
+            mixed_x (torch.Tensor): Mixed inputs.
+            y_a (torch.Tensor): Original targets.
+            y_b (torch.Tensor): Permuted targets.
+            lam (float): Mixup coefficient.
+    """
     if alpha > 0:
         lam = np.random.beta(alpha, alpha)
     else:
@@ -37,12 +59,28 @@ def mixup_data(x, y, alpha=1.0):
     return mixed_x, y_a, y_b, lam
 
 def count_params(model: nn.Module) -> tuple[int, int]:
+    """Counts the number of trainable and total parameters in the model.
+
+    Args:
+        model (nn.Module): The model to analyze.
+
+    Returns:
+        tuple: (trainable parameter count, total parameter count)
+    """
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model.parameters())
     return trainable, total
 
-
 def compute_class_weights(dataset, device: torch.device) -> torch.Tensor:
+    """Computes class weights for balancing loss based on training distribution.
+
+    Args:
+        dataset: Dataset object with .targets and .classes attributes.
+        device (torch.device): Device to move resulting weights to.
+
+    Returns:
+        torch.Tensor: Class weights' tensor.
+    """
     targets = np.array(dataset.targets)
     class_counts = np.bincount(targets, minlength=len(dataset.classes))
     total = len(targets)
@@ -54,13 +92,23 @@ def compute_class_weights(dataset, device: torch.device) -> torch.Tensor:
         print(f"    {cls:12s}: count={c:6d}  weight={w:.4f}")
     return weights
 
-
 def make_checkpoint(
     model: nn.Module,
     backbone: str,
     classes: list[str],
     best_val_acc: float | None = None,
 ) -> dict:
+    """Creates a checkpoint dictionary for saving.
+
+    Args:
+        model (nn.Module): Model to checkpoint.
+        backbone (str): Backbone model name.
+        classes (list[str]): List of class names.
+        best_val_acc (float, optional): Best validation accuracy.
+
+    Returns:
+        dict: Checkpoint dictionary.
+    """
     ckpt = {
         "arch": backbone,
         "num_classes": len(classes),
@@ -71,11 +119,18 @@ def make_checkpoint(
         ckpt["best_val_acc"] = best_val_acc
     return ckpt
 
-
 def load_final_best_acc(final_path: Path) -> float:
+    """Loads the best validation accuracy from a previous final checkpoint file.
+
+    Args:
+        final_path (Path): Path to the final checkpoint file.
+
+    Returns:
+        float: Best validation accuracy in checkpoint, or 0.0 if not found.
+    """
     if final_path.exists():
         try:
-            ckpt = torch.load(final_path, map_location="cpu", weights_only=True)
+            ckpt = torch.load(final_path, map_location="cpu", weights_only=False)
             acc = ckpt.get("best_val_acc", 0.0)
             print(f"▶ Existing final model found: val_acc = {acc:.4f}")
             return acc
@@ -83,9 +138,19 @@ def load_final_best_acc(final_path: Path) -> float:
             pass
     return 0.0
 
-
 @torch.no_grad()
 def evaluate(model: nn.Module, loader, criterion: nn.Module, device: torch.device):
+    """Evaluates the model on the validation set.
+
+    Args:
+        model (nn.Module): Model to evaluate.
+        loader: Validation data loader.
+        criterion (nn.Module): Loss function.
+        device (torch.device): Device for computation.
+
+    Returns:
+        tuple: (average loss, average accuracy)
+    """
     model.eval()
     total = correct = 0
     running_loss = 0.0
@@ -101,7 +166,6 @@ def evaluate(model: nn.Module, loader, criterion: nn.Module, device: torch.devic
 
     return running_loss / total, correct / total
 
-
 def train_one_epoch(
         model: nn.Module,
         loader,
@@ -110,6 +174,19 @@ def train_one_epoch(
         device: torch.device,
         mixup_alpha: float = 0.0,
 ):
+    """Performs a single training epoch.
+
+    Args:
+        model (nn.Module): Model to train.
+        loader: Training data loader.
+        criterion (nn.Module): Loss function.
+        optimizer: Optimizer.
+        device (torch.device): Device for computation.
+        mixup_alpha (float, optional): Mixup parameter (default 0 disables mixup).
+
+    Returns:
+        tuple: (average epoch loss, average epoch accuracy)
+    """
     model.train()
     total = correct = 0
     running_loss = 0.0
@@ -118,26 +195,20 @@ def train_one_epoch(
         images, labels = images.to(device), labels.to(device)
         optimizer.zero_grad(set_to_none=True)
 
-        # --- 1. Forward Pass & Loss ---
         if mixup_alpha > 0.0:
-            # Define mixup variables here
             images, targets_a, targets_b, lam = mixup_data(images, labels, alpha=mixup_alpha)
             logits = model(images)
             loss = lam * criterion(logits, targets_a) + (1 - lam) * criterion(logits, targets_b)
 
-            # --- 2. Metrics (Mixup version) ---
             preds = logits.argmax(1)
-            # lam, targets_a, and targets_b are guaranteed to exist here
             correct += (lam * (preds == targets_a).sum().float() +
                         (1 - lam) * (preds == targets_b).sum().float()).item()
         else:
             logits = model(images)
             loss = criterion(logits, labels)
 
-            # --- 2. Metrics (Standard version) ---
             correct += (logits.argmax(1) == labels).sum().item()
 
-        # --- 3. Backward Pass ---
         loss.backward()
         optimizer.step()
 
@@ -163,8 +234,29 @@ def run_phase(
     best_ckpt_path: Path,
     mixup_alpha: float=0.0
 ):
-    patience_counter = 0
+    """Runs a full training phase (head-only or fine-tune) with early stopping.
 
+    Args:
+        phase_name (str): Name of the training phase.
+        model (nn.Module): Model to train.
+        train_loader: Training data loader.
+        val_loader: Validation data loader.
+        criterion (nn.Module): Loss function.
+        optimizer: Optimizer.
+        scheduler: Learning rate scheduler.
+        device (torch.device): Device for computation.
+        epochs (int): Number of epochs for this phase.
+        patience (int): Early stopping patience.
+        best_val_acc (float): Starting best validation accuracy.
+        classes (list[str]): List of target classes.
+        backbone (str): Backbone model name.
+        best_ckpt_path (Path): Path for saving the best checkpoint.
+        mixup_alpha (float): Mixup parameter.
+
+    Returns:
+        float: Best validation accuracy achieved in this phase.
+    """
+    patience_counter = 0
     trainable, total = count_params(model)
     print(f"\n{'=' * 60}")
     print(f"Phase: {phase_name}")
@@ -200,15 +292,19 @@ def run_phase(
 
     return best_val_acc
 
-
 def main(args: argparse.Namespace):
+    """Main entry point for training MMA FER model.
+
+    Args:
+        args (argparse.Namespace): Parsed command-line arguments.
+    """
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"▶ Device: {device}")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     print(f"▶ Run timestamp: {timestamp}")
 
-    # For freeze/head-only phase
+    # == DataLoader setup ==
     train_loader_freeze, train_ds = get_dataloader(
         args.data,
         split="train",
@@ -224,7 +320,6 @@ def main(args: argparse.Namespace):
         img_size=args.img_size,
     )
 
-    # For fine-tune phase (custom batch size)
     train_loader_ft, _ = get_dataloader(
         args.data,
         split="train",
@@ -305,12 +400,12 @@ def main(args: argparse.Namespace):
         )
     else:
         print("▶ Skipping HEAD-ONLY phase (checkpoint loaded)")
-        run_best_acc = 0.0  # Or optionally load from checkpoint meta if desired
+        run_best_acc = 0.0
 
-    # Always proceed to fine-tuning
+    # == Fine-tune phase ==
     model.unfreeze_backbone()
     optimizer_ft = AdamW([
-        {"params": model.backbone.parameters(), "lr": args.lr * 0.01},
+        {"params": model.backbone.parameters(), "lr": args.lr * 0.1},
         {"params": model.head.parameters(), "lr": args.lr},
     ], weight_decay=1e-2)
     scheduler_ft = CosineAnnealingLR(optimizer_ft, T_max=args.ft_epochs, eta_min=1e-7)
@@ -349,7 +444,6 @@ def main(args: argparse.Namespace):
     print("\n✅ Training complete.")
     print(f"   Run best model  → {best_ckpt_path}")
     print(f"   Final model     → {final_path}")
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train FER")

@@ -1,4 +1,18 @@
+"""
+    model.py
 
+    Defines MMA FER model architecture:
+    - Lightweight wrapper around a timm backbone for Facial Expression Recognition (FER)
+    - Customizable head for classification
+    - Utilities for feature extraction, freezing/unfreezing, and model instantiation
+
+    Main entities:
+        - FERModel: Main model class for FER
+        - build_model: Factory for simplified model creation
+
+    Labels:
+        EMOTION_LABELS: ['angry', 'disgust', 'fear', 'happy', 'neutral', 'sad', 'surprise']
+"""
 import torch
 import torch.nn as nn
 import timm
@@ -8,8 +22,25 @@ EMOTION_LABELS = ["angry", "disgust", "fear", "happy", "neutral", "sad", "surpri
 
 class FERModel(nn.Module):
     """
-    Lightweight FER wrapper:
-    timm backbone without classifier + small custom head.
+        MMA FER model wrapper around a timm backbone, with a custom classification head.
+
+        Features:
+            - Removes original classifier from backbone, replacing with a custom head
+            - Optionally includes a hidden layer before output
+            - Supports backbone feature freezing and unfreezing
+            - Automatic input feature dimension inference
+
+        Args:
+            num_classes (int): Number of output classes (default 7).
+            backbone (str): Backbone model from timm library (default 'convnext_tiny').
+            pretrained (bool): If True, initializes backbone with pretrained weights.
+            dropout (float): Dropout probability for head layers.
+            hidden_dim (int): If >0, uses intermediate hidden layer of this dimension before output.
+            image_size (int): Input image size for feature dimension inference.
+
+        Attributes:
+            backbone (nn.Module): Feature extractor from timm.
+            head (nn.Module): Classification head.
     """
 
     def __init__(
@@ -47,6 +78,13 @@ class FERModel(nn.Module):
             )
 
     def _extract_features(self, x: torch.Tensor) -> torch.Tensor:
+        """
+            Extracts features from backbone, handling forward_features and flattening.
+
+            Args: x (torch.Tensor): Input image batch (B, C, H, W).
+
+            Returns: torch.Tensor: Feature tensor (B, feature_dim)
+        """
         if hasattr(self.backbone, "forward_features"):
             features = self.backbone.forward_features(x)
 
@@ -66,20 +104,40 @@ class FERModel(nn.Module):
         return features
 
     def _infer_feature_dim(self, input_size: int) -> int:
+        """
+            Infers feature dimension of backbone output using a dummy input.
+
+             Args: input_size (int): Input image size.
+
+            Returns: int: Number of backbone features.
+        """
         with torch.no_grad():
             dummy = torch.zeros(1, 3, input_size, input_size)
             features = self._extract_features(dummy)
         return features.shape[1]
 
     def forward(self, x):
+        """
+            Runs input through backbone and head classification layers.
+
+            Args: x (torch.Tensor): Input batch (B, C, H, W).
+
+            Returns: torch.Tensor: Output logits (B, num_classes)
+        """
         features = self._extract_features(x)
         return self.head(features)
 
     def freeze_backbone(self):
+        """
+            Sets backbone parameters as non-trainable (freezes feature extractor).
+        """
         for p in self.backbone.parameters():
             p.requires_grad = False
 
     def unfreeze_backbone(self):
+        """
+            Sets backbone parameters as trainable (unfreezes feature extractor).
+        """
         for p in self.backbone.parameters():
             p.requires_grad = True
 
@@ -92,6 +150,19 @@ def build_model(
     hidden_dim: int = 0,
     input_size: int = 96,
 ) -> FERModel:
+    """
+        Factory function to build FERModel with provided arguments.
+
+        Args:
+            num_classes (int): Number of output classes.
+            backbone (str): Backbone model name.
+            pretrained (bool): Whether to use pretrained weights.
+            dropout (float): Dropout probability.
+            hidden_dim (int): Size of hidden layer (if >0).
+            input_size (int): Input image size.
+
+        Returns: FERModel: Instantiated FER model.
+    """
     return FERModel(
         num_classes=num_classes,
         backbone=backbone,

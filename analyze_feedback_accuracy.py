@@ -1,8 +1,45 @@
+"""
+analyze_feedback_accuracy.py
+
+Analyzes user feedback logs from deployment, computes overall and per-class accuracy,
+and generates a confusion matrix and classification report based on user-validated predictions.
+
+Features:
+    - Loads feedback CSV file with columns: filename, timestamp, predicted_class, user_feedback, true_label
+    - Computes overall deployment accuracy based on user feedback
+    - Computes per-class accuracy breakdown ("details")
+    - Prints classification report and confusion matrix (if true_label column is present)
+    - Optional matplotlib plotting of the confusion matrix
+
+Example usage:
+    python analyze_feedback_accuracy.py --csv user_feedback_log.csv --details --plot
+"""
+
 import argparse
 import pandas as pd
 from sklearn.metrics import confusion_matrix, classification_report
 
 def analyze_feedback_log(csv_path, show_details=False, plot_cm=False):
+    """
+    Analyzes a user feedback log CSV and prints accuracy statistics, confusion matrix,
+    and classification report.
+
+    Args:
+        csv_path (str): Path to the feedback CSV file. Expected columns: filename, timestamp, predicted_class, user_feedback, true_label.
+        show_details (bool): Whether to print per-class accuracy.
+        plot_cm (bool): Whether to plot confusion matrix using matplotlib.
+
+    Prints:
+        - Overall accuracy (percentage and counts).
+        - Per-class accuracy (if requested).
+        - Classification report (if columns available).
+        - Confusion matrix (if columns available).
+        - Confusion matrix plot (if requested and matplotlib is installed).
+
+    Raises:
+        FileNotFoundError: If CSV file cannot be read.
+        KeyError: If required columns are missing for classification report/confusion matrix.
+    """
     df = pd.read_csv(csv_path)
 
     total = len(df)
@@ -53,6 +90,17 @@ def analyze_feedback_log(csv_path, show_details=False, plot_cm=False):
         print("\nFor confusion matrix/classification report, please ensure your CSV logs true_label column.")
 
 def main():
+    """
+    Command-line entrypoint for analyzing feedback log accuracy.
+
+    Parses arguments, then calls analyze_feedback_log.
+
+    Prints:
+        Accuracy summary, metrics report, confusion matrix results.
+
+    Example usage:
+        python analyze_feedback_accuracy.py --csv user_feedback_log.csv --details --plot
+    """
     parser = argparse.ArgumentParser(description="Analyze user feedback log and compute deployment accuracy.")
     parser.add_argument('--csv', type=str, default="user_feedback_log.csv", help="Path to the feedback CSV file.")
     parser.add_argument('--details', action='store_true', help="Show per-class accuracy breakdown.")
