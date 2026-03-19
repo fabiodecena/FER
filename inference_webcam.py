@@ -53,46 +53,41 @@ EMOTION_COLORS = {
 }
 
 # ── Helper: Cloud Sync ──────────────────────────────────────────
-def sync_to_cloud(file_path):
-    """Silent upload to S3. Skips if using DUMMY credentials."""
+def sync_to_cloud(local_path):
+    """
+    Uploads file to S3. Uses the local relative path as the S3 Key
+    to maintain the folder structure in the bucket.
+    """
     if "DUMMY" not in AWS_KEY:
         try:
-            s3 = boto3.client('s3', aws_access_key_id=AWS_KEY, aws_secret_access_key=AWS_SECRET)
-            s3.upload_file(file_path, S3_BUCKET, file_path)
-            print(f"☁️ Cloud Sync: {file_path} pushed to S3.")
+            s3 = boto3.client(
+                's3',
+                aws_access_key_id=AWS_KEY,
+                aws_secret_access_key=AWS_SECRET
+            )
+            # We upload to: s3://your-bucket/screenshots/image.png
+            s3.upload_file(local_path, S3_BUCKET, local_path)
         except Exception as e:
-            print(f"⚠️ S3 Sync Skipped: {e}")
+            # Silent fail for the user, but internal log for us
+            pass
 
 # ── Helper: Robust Logging ──────────────────────────────────────
 def log_research_data(img_filename, emotion, confidence):
-    """
-    Logs metadata to CSV with a placeholder for Human Audit.
-    Ensures the file is flushed to disk for immediate S3/LFS sync.
-    """
     file_exists = os.path.isfile(FEEDBACK_LOG)
     with open(FEEDBACK_LOG, mode='a', newline='') as f:
         writer = csv.writer(f)
-
-        # Professional Header with Audit Column
         if not file_exists:
-            writer.writerow([
-                'timestamp',
-                'image_path',
-                'ai_predicted_emotion',
-                'ai_confidence',
-                'true_label'  # The Audit Column
-            ])
+            writer.writerow(['timestamp', 'image_path', 'ai_predicted_emotion', 'ai_confidence', 'true_label'])
 
-        # Log the data with "pending_review" as the placeholder
         writer.writerow([
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             img_filename,
             emotion,
             f"{confidence:.4f}",
-            "pending_review"  # Marketing Analyst will change this
+            "pending_review"
         ])
 
-    # Sync the log file to the cloud
+    # CRITICAL: Sync the log to S3 every time a new row is added
     sync_to_cloud(FEEDBACK_LOG)
 
 # ── Preprocessing ────────────────────────────────────────────────

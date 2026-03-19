@@ -69,16 +69,20 @@ python analyze_research_data.py --csv dist/inference_webcam/research_analytics_l
 
 ---
 
-## ☁️ Cloud & Configuration Management
+## 🛠 S3 Cloud Ingestion Guide
 
-- **GitHub LFS:** Large binary assets (.exe, .pt, and image datasets) are tracked via Git LFS to maintain repository performance.
-- **AWS S3 Integration:** To enable real-time remote data ingestion, set the following Environment Variables on the deployment machine:
+## ☁️ Setting up the Cloud
+1. **Create an S3 Bucket:** Name it `marketing-sentiment-data`.
+2. **IAM User:** Create a "Programmatic Access" user in AWS with `AmazonS3FullAccess`.
+3. **Environment Variables:** Before building the EXE, set these on your machine:
+   * `AWS_KEY`: (Your Access Key)
+   * `AWS_SECRET`: (Your Secret Key)
 
-  - `AWS_KEY`: Access Key ID
-  - `AWS_SECRET`: Secret Access Key
-  - `S3_BUCKET`: Research Bucket Name
-
----
+## 📥 Data Retrieval
+The system automatically pushes data to the cloud in real-time. To collect all participant data at the end of the study:
+1. Install the [AWS CLI](https://aws.amazon.com/cli/).
+2. Run: `aws s3 sync s3://marketing-sentiment-data ./Final_Audit_Folder`
+3. All images and the master CSV will be downloaded for your review.
 
 ## 🔒 Security & Privacy Compliance
 
