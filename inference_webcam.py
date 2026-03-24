@@ -3,7 +3,7 @@ inference_webcam.py - Marketing Research Edition (v2.0)
 
 Key Features:
 - Ghost UI: User sees a clean mirror; Department receives analyzed frames.
-- Rate-Limiting: 5-second cooldown between captures to ensure high-quality data.
+- Rate-Limiting: 3-second cooldown between captures to ensure high-quality data.
 - Cloud-Ready: Background hooks for S3 and GitHub LFS versioning.
 - Robust Logging: Immediate CSV flushing for real-time analytics.
 """
@@ -31,7 +31,7 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 # --- UPDATE YOUR PATHS USING THE FUNCTION ---
-CHECKPOINT = resource_path("Merged/checkpoints/merged_best_20260305_162825.pt")
+CHECKPOINT = resource_path("merged_best_20260305_162825.pt")
 CASCADE_FILE = resource_path("haarcascade_frontalface_default.xml")
 SCREENSHOT_DIR = "screenshots"
 FEEDBACK_LOG = "research_analytics_log.csv"
