@@ -19,8 +19,6 @@ ENV/
 .idea/
 
 # PyTorch checkpoints
-*.pt
-*.pth
 
 # Datasets
 Merged/data_merged/
