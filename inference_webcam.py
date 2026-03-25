@@ -22,9 +22,9 @@ from model import build_model
 import sys
 
 def resource_path(relative_path):
-    """ Get absolute path to resource, works for dev and for PyInstaller """
+    """ Get an absolute path to resource, works for dev and for PyInstaller """
     try:
-        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        # PyInstaller creates a temp folder and stores a path in _MEIPASS
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
@@ -67,7 +67,7 @@ def sync_to_cloud(local_path):
             )
             # We upload to: s3://your-bucket/screenshots/image.png
             s3.upload_file(local_path, S3_BUCKET, local_path)
-        except Exception as e:
+        except Exception:
             # Silent fail for the user, but internal log for us
             pass
 
