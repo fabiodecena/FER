@@ -20,3 +20,4 @@ matplotlib>=3.6.0
 numpy
 pandas
 boto3
+seaborn
