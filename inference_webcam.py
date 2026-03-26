@@ -1,5 +1,5 @@
 """
-inference_webcam.py - Marketing Research Edition (v2.0)
+inference_webcam.py - Marketing Research Edition
 
 Key Features:
 - Ghost UI: User sees a clean mirror; Department receives analyzed frames.
